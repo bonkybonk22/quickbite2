@@ -3,7 +3,7 @@ from tkinter import ttk, messagebox
 
 from admin_dashboard import AdminDashboardMixin
 from auth_ui import LoginWindow
-from database import db
+from database import ADMIN_ROLES, STAFF_ROLES, db
 from ordering_ui import OrderingUIMixin
 from ui_theme import BG, CARD_BG, NAVY, ORANGE, RED_ACCENT, TEXT_DARK, TEXT_MUTED
 
@@ -11,9 +11,9 @@ from ui_theme import BG, CARD_BG, NAVY, ORANGE, RED_ACCENT, TEXT_DARK, TEXT_MUTE
 class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
     def __init__(self):
         super().__init__()
+        self.minsize(1200, 750)
         self.title("QuickBite - Canteen Ordering System")
         self.geometry("1280x760")
-        self.minsize(1100, 700)
         self.configure(bg=NAVY)
         
         self.current_user = ""
@@ -26,7 +26,6 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
         
         self.image_cache = {}
         
-        # Show login dialog first
         self.withdraw()
         LoginWindow(self, self.start_app)
 
@@ -43,20 +42,29 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
         style.configure("Treeview",
                         background=CARD_BG,
                         foreground=TEXT_DARK,
-                        rowheight=36,
+                        rowheight=40,
                         fieldbackground=CARD_BG,
+                        padding=(8, 4),
                         font=("Segoe UI", 10))
         style.configure("Treeview.Heading",
                         background=CARD_BG,
                         foreground=TEXT_MUTED,
+                        padding=(10, 8),
                         font=("Segoe UI", 9, "bold"),
                         relief="flat")
+        style.configure("TEntry", padding=(8, 6))
+        style.configure("TCombobox", padding=(8, 5))
+        style.configure("TSpinbox", padding=(8, 5))
         style.map("Treeview", background=[("selected", RED_ACCENT)])
 
     def build_ui(self):
-        # 1. Top Header Banner
+        self.grid_rowconfigure(0, weight=0, minsize=75)
+        self.grid_rowconfigure(1, weight=0, minsize=1)
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
         self.header = tk.Frame(self, bg=NAVY, height=75)
-        self.header.pack(fill="x")
+        self.header.grid(row=0, column=0, sticky="ew")
         self.header.pack_propagate(False)
 
         logo_frame = tk.Frame(self.header, bg=NAVY)
@@ -88,51 +96,66 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
         self.prof_name_lbl.pack(anchor="w")
         tk.Label(prof_text, text="Switch / Logout", bg=NAVY, fg="#9ca3af", font=("Segoe UI", 8)).pack(anchor="w")
 
-        tk.Frame(self, bg="#334155", height=1).pack(fill="x")
+        tk.Frame(self, bg="#334155", height=1).grid(row=1, column=0, sticky="ew")
 
-        # 2. Main Body Split Container
         body = tk.Frame(self, bg=BG)
-        body.pack(fill="both", expand=True)
+        self.body = body
+        body.grid(row=2, column=0, sticky="nsew")
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=0, minsize=220)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure(2, weight=0, minsize=320)
 
         sidebar = tk.Frame(body, bg=NAVY, width=220)
-        sidebar.pack(side="left", fill="y")
+        sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.pack_propagate(False)
         self.build_sidebar(sidebar)
 
-        # Workspace container holding different views
         self.workspace_outer = tk.Frame(body, bg=BG)
-        self.workspace_outer.pack(side="left", fill="both", expand=True, padx=16, pady=16)
+        self.workspace_outer.grid(row=0, column=1, sticky="nsew", padx=16, pady=16)
+        self.workspace_outer.grid_rowconfigure(0, weight=1)
+        self.workspace_outer.grid_columnconfigure(0, weight=1)
 
-        # Right Sidebar (Order Summary & Quick Ingredients)
         self.right_sidebar = tk.Frame(body, bg=BG, width=320)
-        self.right_sidebar.pack(side="right", fill="y", padx=(0, 16), pady=16)
+        self.right_sidebar.grid(row=0, column=2, sticky="nsew", padx=(0, 16), pady=16)
         self.right_sidebar.pack_propagate(False)
         self.build_right_sidebar(self.right_sidebar)
 
-        # Build views
         self.views = {}
         
-        # View 1: Order Food (Dashboard)
         self.views["order"] = tk.Frame(self.workspace_outer, bg=BG)
         self.build_order_content(self.views["order"])
 
-        # View 2: Ingredients Stock
-        self.views["ingredients"] = tk.Frame(self.workspace_outer, bg=BG)
-        self.build_ingredients_content(self.views["ingredients"])
+        self.build_role_views()
 
-        # View 3: Settings
-        self.views["settings"] = tk.Frame(self.workspace_outer, bg=BG)
-        self.build_settings_content(self.views["settings"])
+        self.switch_view("order")
 
-        # View 4: Monthly Sales Report
-        self.views["sales"] = tk.Frame(self.workspace_outer, bg=BG)
-        self.build_monthly_sales_content(self.views["sales"])
+    def build_role_views(self):
+        if self.current_role in STAFF_ROLES:
+            self.views["ingredients"] = tk.Frame(self.workspace_outer, bg=BG)
+            self.build_ingredients_content(self.views["ingredients"])
 
-        if self.current_role == "Canteen staff":
+            self.views["sales"] = tk.Frame(self.workspace_outer, bg=BG)
+            self.build_monthly_sales_content(self.views["sales"])
+        elif self.current_role in ADMIN_ROLES:
+            self.views["settings"] = tk.Frame(self.workspace_outer, bg=BG)
+            self.build_settings_content(self.views["settings"])
+
             self.views["verification"] = tk.Frame(self.workspace_outer, bg=BG)
             self.build_verification_content(self.views["verification"])
 
-        self.switch_view("order")
+    def remove_role_views(self):
+        for key in ("ingredients", "settings", "sales", "verification"):
+            frame = self.views.pop(key, None)
+            if frame is not None:
+                frame.destroy()
+        for attribute in (
+            "ing_tree", "biz_name_entry", "biz_sub_entry",
+            "monthly_sales_tree", "monthly_sales_summary", "report_month",
+            "report_year", "pending_tree",
+        ):
+            if hasattr(self, attribute):
+                delattr(self, attribute)
 
     def relogin(self):
         LoginWindow(self, self.switch_account)
@@ -141,13 +164,16 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
         self.current_user = username
         self.current_role = role
         self.prof_name_lbl.config(text=username)
-        if role == "Canteen staff" and "verification" not in self.views:
-            self.views["verification"] = tk.Frame(self.workspace_outer, bg=BG)
-            self.build_verification_content(self.views["verification"])
-        elif role != "Canteen staff" and "verification" in self.views:
-            self.views.pop("verification").destroy()
-            if hasattr(self, "pending_tree"):
-                del self.pending_tree
+        self.remove_role_views()
+        self.build_role_views()
+        self.views["order"].destroy()
+        self.views["order"] = tk.Frame(self.workspace_outer, bg=BG)
+        self.build_order_content(self.views["order"])
+        for child in self.right_sidebar.winfo_children():
+            child.destroy()
+        if hasattr(self, "ing_frame"):
+            del self.ing_frame
+        self.build_right_sidebar(self.right_sidebar)
         self.build_sidebar(self.sidebar)
         self.switch_view("order")
 
@@ -159,12 +185,17 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
         self.nav_buttons = {}
         nav_items = [
             ("🛒", "Order Food", "order"),
-            ("🍯", "Ingredients Status", "ingredients"),
-            ("📊", "Monthly Sales", "sales"),
-            ("⚙", "Settings", "settings"),
         ]
-        if self.current_role == "Canteen staff":
-            nav_items.append(("✓", "Verify Accounts", "verification"))
+        if self.current_role in STAFF_ROLES:
+            nav_items.extend((
+                ("🍯", "Ingredients Status", "ingredients"),
+                ("📊", "Monthly Sales", "sales"),
+            ))
+        elif self.current_role in ADMIN_ROLES:
+            nav_items.extend((
+                ("⚙", "Settings", "settings"),
+                ("✓", "Verify Accounts", "verification"),
+            ))
         for icon, label, key in nav_items:
             btn = tk.Frame(parent, bg=NAVY, cursor="hand2")
             btn.pack(fill="x", padx=12, pady=4, ipady=8)
@@ -173,17 +204,26 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
             lbl_text = tk.Label(btn, text=label, bg=NAVY, fg="#94a3b8", font=("Segoe UI", 10))
             lbl_text.pack(side="left")
         
-            # Bind click events
             for widget in (btn, lbl_icon, lbl_text):
                 widget.bind("<Button-1>", lambda e, k=key: self.switch_view(k))
         
             self.nav_buttons[key] = (btn, lbl_icon, lbl_text)
 
     def switch_view(self, key):
-        if key not in self.views:
+        view_roles = {
+            "ingredients": STAFF_ROLES,
+            "sales": STAFF_ROLES,
+            "settings": ADMIN_ROLES,
+            "verification": ADMIN_ROLES,
+        }
+        if key in view_roles and self.current_role not in view_roles[key]:
+            messagebox.showerror(
+                "Access denied",
+                "You do not have permission to access this view.",
+                parent=self,
+            )
             return
-        if key == "verification" and self.current_role != "Canteen staff":
-            messagebox.showerror("Access denied", "Only canteen staff can verify accounts.", parent=self)
+        if key not in self.views:
             return
 
         for k, (btn, icon_l, text_l) in self.nav_buttons.items():
@@ -198,15 +238,16 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
 
         for v_key, frame in self.views.items():
             if v_key == key:
-                frame.pack(fill="both", expand=True)
+                frame.grid(row=0, column=0, sticky="nsew")
             else:
-                frame.pack_forget()
+                frame.grid_remove()
             
-        # Toggle right sidebar visibility depending on view
         if key == "order":
-            self.right_sidebar.pack(side="right", fill="y", padx=(0, 16), pady=16)
+            self.body.grid_columnconfigure(2, minsize=320)
+            self.right_sidebar.grid()
         else:
-            self.right_sidebar.pack_forget()
+            self.right_sidebar.grid_remove()
+            self.body.grid_columnconfigure(2, minsize=0)
 
         self.current_view = key
         if key == "sales":
@@ -219,5 +260,4 @@ class App(OrderingUIMixin, AdminDashboardMixin, tk.Tk):
         self.refresh_summary()
         self.refresh_ingredients()
         self.refresh_ingredients_table()
-        self.refresh_settings_stats()
         self.refresh_pending_accounts()

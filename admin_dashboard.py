@@ -5,7 +5,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from database import (
-    VERIFICATION_ACCEPTED, VERIFICATION_DECLINED, accounts, db,
+    ADMIN_ROLES, STAFF_ROLES, VERIFICATION_ACCEPTED, VERIFICATION_DECLINED,
+    accounts, db,
 )
 from ui_theme import (
     BG, CARD_BG, GOLD, NAVY, ORANGE, RED_ACCENT, TEXT_DARK, TEXT_MUTED,
@@ -18,7 +19,7 @@ class AdminDashboardMixin:
                  font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 12))
 
         ing_card = tk.Frame(parent, bg=CARD_BG, highlightbackground="#e2e8f0", highlightthickness=1)
-        ing_card.pack(fill="both", expand=True, padx=0, pady=0)
+        ing_card.pack(anchor="n", padx=0, pady=(0, 16))
 
         top_act = tk.Frame(ing_card, bg=CARD_BG)
         top_act.pack(fill="x", padx=20, pady=18)
@@ -33,19 +34,24 @@ class AdminDashboardMixin:
 
         self.ing_tree = ttk.Treeview(
             ing_card, columns=("id", "name", "status", "stock"),
-            show="headings", height=12,
+            show="headings", height=max(1, len(db.get_ingredients())),
         )
         
-        col_widths = (70, 230, 160, 110)
+        col_widths = (55, 190, 135, 95)
         col_names = ("ID", "INGREDIENT", "STATUS", "STOCK LEVEL")
         for c, w, name in zip(("id", "name", "status", "stock"), col_widths, col_names):
-            self.ing_tree.heading(c, text=name)
+            column_anchor = (
+                "center" if c in ("id", "status")
+                else "e" if c == "stock"
+                else "w"
+            )
+            self.ing_tree.heading(c, text=name, anchor=column_anchor)
             self.ing_tree.column(
-                c, width=w, minwidth=60, stretch=c == "name",
-                anchor="e" if c == "stock" else "w",
+                c, width=w, minwidth=55, stretch=False,
+                anchor=column_anchor,
             )
         
-        self.ing_tree.pack(fill="both", expand=True, padx=20, pady=(0, 18))
+        self.ing_tree.pack(fill="x", expand=False, padx=20, pady=(0, 20))
 
     def build_settings_content(self, parent):
         tk.Label(parent, text="SYSTEM SETTINGS", bg=BG, fg=TEXT_DARK,
@@ -66,52 +72,34 @@ class AdminDashboardMixin:
         tk.Label(inner, text="Business Name", bg=CARD_BG, fg=TEXT_DARK,
                  font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=6)
         self.biz_name_entry = ttk.Entry(inner, font=("Segoe UI", 10))
-        self.biz_name_entry.grid(row=1, column=1, sticky="ew", padx=(20, 0), pady=6)
+        self.biz_name_entry.grid(row=1, column=1, sticky="ew", padx=(20, 0), pady=8)
         self.biz_name_entry.insert(0, db.settings["business_name"])
 
         tk.Label(inner, text="Receipt Header Subtitle", bg=CARD_BG, fg=TEXT_DARK,
                  font=("Segoe UI", 9, "bold")).grid(row=2, column=0, sticky="w", pady=6)
         self.biz_sub_entry = ttk.Entry(inner, font=("Segoe UI", 10))
-        self.biz_sub_entry.grid(row=2, column=1, sticky="ew", padx=(20, 0), pady=6)
+        self.biz_sub_entry.grid(row=2, column=1, sticky="ew", padx=(20, 0), pady=8)
         self.biz_sub_entry.insert(0, db.settings["receipt_header"])
-
-        tk.Label(
-            inner, text="INVENTORY CONTROLS", bg=CARD_BG, fg=RED_ACCENT,
-            font=("Segoe UI", 10, "bold"),
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(18, 8))
-
-        tk.Label(inner, text="Low Stock Threshold", bg=CARD_BG, fg=TEXT_DARK,
-                 font=("Segoe UI", 9, "bold")).grid(row=4, column=0, sticky="w", pady=6)
-        self.low_thresh_entry = ttk.Entry(inner, font=("Segoe UI", 10))
-        self.low_thresh_entry.grid(row=4, column=1, sticky="ew", padx=(20, 0), pady=6)
-        self.low_thresh_entry.insert(0, str(db.settings["low_threshold"]))
-
-        tk.Label(inner, text="High Stock Threshold", bg=CARD_BG, fg=TEXT_DARK,
-                 font=("Segoe UI", 9, "bold")).grid(row=5, column=0, sticky="w", pady=6)
-        self.high_thresh_entry = ttk.Entry(inner, font=("Segoe UI", 10))
-        self.high_thresh_entry.grid(row=5, column=1, sticky="ew", padx=(20, 0), pady=6)
-        self.high_thresh_entry.insert(0, str(db.settings["high_threshold"]))
 
         tk.Button(
             inner, text="Save Settings", bg=RED_ACCENT, fg="white",
             font=("Segoe UI", 9, "bold"), relief="flat", padx=18, pady=8,
             cursor="hand2", command=self.save_settings,
-        ).grid(row=6, column=1, sticky="e", padx=(20, 0), pady=(14, 0))
+        ).grid(row=3, column=1, sticky="e", padx=(20, 0), pady=(14, 0))
 
-        # Sales Summary & History Management Card
-        stats_card = tk.Frame(parent, bg=CARD_BG, highlightbackground="#e2e8f0", highlightthickness=1)
-        stats_card.pack(fill="x", padx=0, pady=0)
-
-        stats_inner = tk.Frame(stats_card, bg=CARD_BG)
-        stats_inner.pack(fill="x", padx=20, pady=20)
-
-        tk.Label(stats_inner, text="SALES SUMMARY & HISTORY", bg=CARD_BG, fg=TEXT_DARK, font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 10))
-        
-        self.sales_stat_lbl = tk.Label(stats_inner, text="", bg=CARD_BG, fg=TEXT_MUTED, font=("Segoe UI", 10))
-        self.sales_stat_lbl.pack(anchor="w", pady=4)
-
-        tk.Button(stats_inner, text="🗑 Clear Order History", bg="#d62828", fg="white", font=("Segoe UI", 9, "bold"),
-                  relief="flat", padx=14, pady=6, cursor="hand2", command=self.clear_history).pack(anchor="w", pady=(12, 0))
+        management_card = tk.Frame(parent, bg=CARD_BG, highlightbackground="#e2e8f0", highlightthickness=1)
+        management_card.pack(fill="x", padx=0, pady=0)
+        management_inner = tk.Frame(management_card, bg=CARD_BG)
+        management_inner.pack(fill="x", padx=20, pady=20)
+        tk.Label(
+            management_inner, text="DATA MANAGEMENT", bg=CARD_BG, fg=TEXT_DARK,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+        tk.Button(
+            management_inner, text="Clear Order History", bg="#d62828", fg="white",
+            font=("Segoe UI", 9, "bold"), relief="flat", padx=14, pady=6,
+            cursor="hand2", command=self.clear_history,
+        ).pack(anchor="w")
 
     def build_monthly_sales_content(self, parent):
         tk.Label(
@@ -162,7 +150,7 @@ class AdminDashboardMixin:
         self.monthly_sales_tree.column("item", width=260, anchor="w")
         self.monthly_sales_tree.column("quantity", width=140, anchor="center")
         self.monthly_sales_tree.column("revenue", width=160, anchor="e")
-        self.monthly_sales_tree.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+        self.monthly_sales_tree.pack(fill="both", expand=True, padx=20, pady=(0, 12))
         self.monthly_sales_summary = tk.Label(
             report_card, text="", bg=CARD_BG, fg=TEXT_DARK,
             font=("Segoe UI", 9, "bold"),
@@ -171,6 +159,12 @@ class AdminDashboardMixin:
         self.generate_monthly_sales_report()
 
     def generate_monthly_sales_report(self):
+        if self.current_role not in STAFF_ROLES:
+            messagebox.showerror(
+                "Access denied", "Monthly sales reports are for canteen staff.",
+                parent=self,
+            )
+            return
         try:
             year = int(self.report_year.get().strip())
             month = self.report_month.current() + 1
@@ -203,6 +197,12 @@ class AdminDashboardMixin:
         )
 
     def export_monthly_sales_report(self):
+        if self.current_role not in STAFF_ROLES:
+            messagebox.showerror(
+                "Access denied", "Monthly sales reports are for canteen staff.",
+                parent=self,
+            )
+            return
         try:
             year = int(self.report_year.get().strip())
             month = self.report_month.current() + 1
@@ -289,7 +289,7 @@ class AdminDashboardMixin:
         ):
             self.pending_tree.heading(column, text=label)
             self.pending_tree.column(column, width=width, anchor="w")
-        self.pending_tree.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        self.pending_tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
         actions = tk.Frame(card, bg=CARD_BG)
         actions.pack(fill="x", padx=16, pady=(0, 16))
@@ -307,7 +307,7 @@ class AdminDashboardMixin:
         ).pack(side="left")
 
     def refresh_pending_accounts(self):
-        if self.current_role != "Canteen staff" or not hasattr(self, "pending_tree"):
+        if self.current_role not in ADMIN_ROLES or not hasattr(self, "pending_tree"):
             return
         try:
             pending_accounts = accounts.get_pending_accounts()
@@ -327,9 +327,9 @@ class AdminDashboardMixin:
             )
 
     def review_selected_account(self, status):
-        if self.current_role != "Canteen staff":
+        if self.current_role not in ADMIN_ROLES:
             messagebox.showerror(
-                "Access denied", "Only canteen staff can verify accounts.", parent=self
+                "Access denied", "Only admins can verify accounts.", parent=self
             )
             return
         selection = self.pending_tree.selection()
@@ -346,45 +346,24 @@ class AdminDashboardMixin:
         self.refresh_pending_accounts()
 
     def save_settings(self):
-        try:
-            business_name = self.biz_name_entry.get().strip()
-            receipt_header = self.biz_sub_entry.get().strip()
-            low_threshold = int(self.low_thresh_entry.get().strip())
-            high_threshold = int(self.high_thresh_entry.get().strip())
-            if low_threshold < 0 or high_threshold <= low_threshold:
-                raise ValueError
-        
-            db.settings["business_name"] = business_name
-            db.settings["receipt_header"] = receipt_header
-            db.settings["low_threshold"] = low_threshold
-            db.settings["high_threshold"] = high_threshold
-            for ingredient in db.get_ingredients():
-                if ingredient["stock"] >= high_threshold:
-                    ingredient["status"] = "High"
-                elif ingredient["stock"] <= low_threshold:
-                    ingredient["status"] = "Low Stock"
-                else:
-                    ingredient["status"] = "Normal"
-            for item in db.get_menu():
-                if item["stock"] <= 0:
-                    item["status"] = "Out of Stock"
-                elif item["stock"] <= low_threshold:
-                    item["status"] = "Low Stock"
-                else:
-                    item["status"] = "Available"
-            self.header_main_lbl.config(text=db.settings["business_name"])
-            self.header_sub_lbl.config(text=db.settings["receipt_header"])
-            messagebox.showinfo("Success", "Settings saved successfully!")
-            self.refresh()
-        except ValueError:
+        if self.current_role not in ADMIN_ROLES:
             messagebox.showerror(
-                "Invalid settings",
-                "Enter whole-number thresholds. Low stock must be zero or more, "
-                "and high stock must be greater than low stock.",
-                parent=self,
+                "Access denied", "Settings are for admins.", parent=self
             )
+            return
+        db.settings["business_name"] = self.biz_name_entry.get().strip()
+        db.settings["receipt_header"] = self.biz_sub_entry.get().strip()
+        self.header_main_lbl.config(text=db.settings["business_name"])
+        self.header_sub_lbl.config(text=db.settings["receipt_header"])
+        messagebox.showinfo("Success", "Settings saved successfully!")
+        self.refresh()
 
     def clear_history(self):
+        if self.current_role not in ADMIN_ROLES:
+            messagebox.showerror(
+                "Access denied", "Only admins can clear order history.", parent=self
+            )
+            return
         if messagebox.askyesno("Confirm", "Are you sure you want to clear all order history and sales stats?"):
             db.clear_orders()
             self.refresh()
@@ -398,9 +377,3 @@ class AdminDashboardMixin:
                     "", "end", iid=str(ing["id"]), tags=(ing["status"],),
                     values=(ing["id"], ing["name"], ing["status"], ing["stock"])
                 )
-
-    def refresh_settings_stats(self):
-        if hasattr(self, 'sales_stat_lbl'):
-            total_orders = len(db.orders)
-            total_revenue = sum(o["total"] for o in db.orders)
-            self.sales_stat_lbl.config(text=f"Total Completed Orders: {total_orders}\nTotal Sales Revenue: ₱{total_revenue:.2f}")

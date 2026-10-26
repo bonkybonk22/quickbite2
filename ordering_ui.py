@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 
-from database import db
+from database import ADMIN_ROLES, STAFF_ROLES, db
 from ui_theme import (
     BG, CARD_BG, GOLD, RED_ACCENT, RED_DARK,
     RED_PALE, STATUS_COLORS, TEXT_DARK, TEXT_MUTED,
@@ -11,6 +11,15 @@ from ui_theme import (
 
 
 class OrderingUIMixin:
+    MENU_COLUMN_SPECS = {
+        "name": {"min": 105, "weight": 1.8},
+        "category": {"min": 85, "weight": 1.2},
+        "price": {"min": 62, "weight": 0.8},
+        "status": {"min": 86, "weight": 1.0},
+        "stock": {"min": 98, "weight": 1.1},
+        "actions": {"min": 72, "weight": 0.8},
+    }
+
     def build_order_content(self, parent):
         tk.Label(
             parent, text="ORDER FOOD", bg=BG, fg=TEXT_DARK,
@@ -30,8 +39,8 @@ class OrderingUIMixin:
         search_box = tk.Frame(top_bar, bg="#f8fafc", highlightbackground="#cbd5e1", highlightthickness=1)
         search_box.pack(side="left", fill="x", expand=True, ipady=5, ipadx=10)
         
-        tk.Label(search_box, text="⌕", bg="#f8fafc", fg=RED_ACCENT,
-                 font=("Segoe UI", 13, "bold")).pack(side="left", padx=(0, 8))
+        tk.Label(search_box, text="Search", bg="#f8fafc", fg=RED_ACCENT,
+                 font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 8))
         search_entry = ttk.Entry(search_box, textvariable=self.search_var, font=("Segoe UI", 10), width=30)
         search_entry.pack(side="left", fill="x", expand=True)
         tk.Button(
@@ -40,33 +49,131 @@ class OrderingUIMixin:
             command=lambda: self.search_var.set(""),
         ).pack(side="right", padx=6)
 
-        add_btn = tk.Button(top_bar, text="+ Add Item", bg=RED_ACCENT, fg="white",
-                            font=("Segoe UI", 9, "bold"), relief="flat", padx=16, pady=8,
-                            cursor="hand2", command=self.add_item)
-        add_btn.pack(side="right", padx=(14, 0))
+        if self.current_role in ADMIN_ROLES:
+            add_btn = tk.Button(top_bar, text="+ Add Item", bg=RED_ACCENT, fg="white",
+                                font=("Segoe UI", 9, "bold"), relief="flat", padx=16, pady=8,
+                                cursor="hand2", command=self.add_item)
+            add_btn.pack(side="right", padx=(14, 0))
 
-        cols = ("name", "category", "price", "status", "actions")
-        self.tree = ttk.Treeview(table_card, columns=cols, show="headings", height=4)
+        self.can_manage_menu = self.current_role in ADMIN_ROLES
+        cols = ("name", "category", "price", "status", "stock")
+        if self.can_manage_menu:
+            cols += ("actions",)
+        table_frame = tk.Frame(table_card, bg=CARD_BG)
+        table_frame.pack(fill="x", padx=12, pady=(0, 16))
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=4)
         
-        col_widths = (170, 120, 75, 105, 85)
-        for c, w in zip(cols, col_widths):
-            self.tree.heading(c, text=c.upper() if c != "actions" else "ACTIONS")
-            self.tree.column(
-                c, width=w, minwidth=65, stretch=c in ("name", "category"),
-                anchor="e" if c == "price" else "center" if c == "actions" else "w",
+        column_labels = {
+            "name": "NAME",
+            "category": "CATEGORY",
+            "price": "PRICE",
+            "status": "STATUS",
+            "stock": "SERVINGS LEFT",
+            "actions": "ACTIONS",
+        }
+        for c in cols:
+            column_anchor = (
+                "e" if c == "price"
+                else "center" if c in ("status", "stock", "actions")
+                else "w"
             )
+            self.tree.heading(
+                c,
+                text=column_labels[c],
+                anchor=column_anchor,
+            )
+            self.tree.column(
+                c, width=self.MENU_COLUMN_SPECS[c]["min"],
+                minwidth=1,
+                stretch=False,
+                anchor=column_anchor,
+            )
+        self.menu_table_columns = cols
+        self.tree.bind(
+            "<Configure>",
+            lambda event: self.resize_menu_columns(event),
+            add="+",
+        )
         
         for status, color in STATUS_COLORS.items():
             self.tree.tag_configure(status, foreground=color)
-        
-        self.tree.pack(fill="x", padx=18, pady=(0, 16))
-        self.tree.bind("<Double-1>", lambda event: self.edit_item())
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        if self.can_manage_menu:
+            self.tree.bind("<Double-1>", lambda event: self.edit_item())
 
         tk.Label(parent, text="MENU", bg=BG, fg=TEXT_DARK,
                  font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 10))
 
         self.cards_wrapper = tk.Frame(parent, bg=BG)
         self.cards_wrapper.pack(fill="both", expand=True)
+
+    def resize_menu_columns(self, event):
+        all_columns = self.menu_table_columns
+        compact_columns = tuple(
+            column for column in all_columns if column != "category"
+        )
+        minimum_width = sum(
+            self.MENU_COLUMN_SPECS[column]["min"]
+            for column in all_columns
+        )
+        columns = all_columns if event.width >= minimum_width else compact_columns
+        self.tree.configure(displaycolumns=columns)
+
+        labels = {
+            "name": "NAME",
+            "category": "CATEGORY",
+            "price": "PRICE",
+            "status": "STATUS",
+            "stock": "SERVINGS LEFT" if columns == all_columns else "LEFT",
+            "actions": "ACTIONS",
+        }
+        for column in columns:
+            column_anchor = (
+                "e" if column == "price"
+                else "center" if column in ("status", "stock", "actions")
+                else "w"
+            )
+            self.tree.heading(
+                column,
+                text=labels[column],
+                anchor=column_anchor,
+            )
+
+        widths = {
+            column: self.MENU_COLUMN_SPECS[column]["min"]
+            for column in columns
+        }
+        remaining = max(0, event.width - sum(widths.values()))
+        total_weight = sum(
+            self.MENU_COLUMN_SPECS[column]["weight"] for column in columns
+        )
+        for column in columns:
+            widths[column] += int(
+                remaining
+                * self.MENU_COLUMN_SPECS[column]["weight"]
+                / total_weight
+            )
+        remainder = event.width - sum(widths.values())
+        for column in columns[:max(0, remainder)]:
+            widths[column] += 1
+
+        if sum(widths.values()) > event.width:
+            shrinkable = sorted(
+                columns,
+                key=lambda column: self.MENU_COLUMN_SPECS[column]["min"],
+                reverse=True,
+            )
+            excess = sum(widths.values()) - event.width
+            for column in shrinkable:
+                reduction = min(excess, widths[column] - 1)
+                widths[column] -= reduction
+                excess -= reduction
+                if excess == 0:
+                    break
+        for column, width in widths.items():
+            self.tree.column(column, width=max(1, width))
 
     def build_right_sidebar(self, parent):
         box1 = tk.Frame(parent, bg=CARD_BG, highlightbackground="#e2e8f0", highlightthickness=1)
@@ -109,27 +216,38 @@ class OrderingUIMixin:
         self.total_lbl = tk.Label(details_frame, bg=CARD_BG, fg=RED_ACCENT, font=("Segoe UI", 12, "bold"))
         self.total_lbl.pack(anchor="w", padx=14, pady=(3, 14))
 
-        box3 = tk.Frame(parent, bg=CARD_BG, highlightbackground="#e2e8f0", highlightthickness=1)
-        box3.pack(fill="x", pady=(0, 14))
-        
-        tk.Label(box3, text="INGREDIENT STATUS", bg=CARD_BG, fg=TEXT_DARK,
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=16, pady=(16, 6))
-        
-        self.ing_frame = tk.Frame(box3, bg=CARD_BG)
-        self.ing_frame.pack(fill="x", padx=16, pady=6)
-        
-        tk.Button(box3, text="Restock Stock", bg=RED_PALE, fg=RED_DARK,
-                  font=("Segoe UI", 9, "bold"), relief="flat", pady=7, cursor="hand2",
-                  command=self.restock).pack(fill="x", padx=16, pady=(8, 16))
+        if self.current_role in STAFF_ROLES:
+            box3 = tk.Frame(parent, bg=CARD_BG, highlightbackground="#e2e8f0", highlightthickness=1)
+            box3.pack(fill="x", pady=(0, 14))
+
+            tk.Label(box3, text="INGREDIENT STATUS", bg=CARD_BG, fg=TEXT_DARK,
+                     font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=16, pady=(16, 6))
+
+            self.ing_frame = tk.Frame(box3, bg=CARD_BG)
+            self.ing_frame.pack(fill="x", padx=16, pady=6)
+
+            tk.Button(box3, text="Restock Stock", bg=RED_PALE, fg=RED_DARK,
+                      font=("Segoe UI", 9, "bold"), relief="flat", pady=7, cursor="hand2",
+                      command=self.restock).pack(fill="x", padx=16, pady=(8, 16))
 
     def refresh_table(self):
         if hasattr(self, 'tree'):
             self.tree.delete(*self.tree.get_children())
+            ingredients_by_id = {
+                ingredient["id"]: ingredient
+                for ingredient in db.get_ingredients()
+            }
             for m in db.get_menu(self.search_var.get().strip()):
+                values = [m["name"], m["category"], f"₱{m['price']:.0f}", "● " + m["status"]]
+                ingredient = ingredients_by_id.get(m["ingredient_id"])
+                values.append(
+                    ingredient["stock"] if ingredient is not None else "N/A"
+                )
+                if self.current_role in ADMIN_ROLES:
+                    values.append("✏️    🗑️")
                 self.tree.insert(
                     "", "end", iid=str(m["id"]), tags=(m["status"],),
-                    values=(m["name"], m["category"], f"₱{m['price']:.0f}",
-                            "● " + m["status"], "✏️    🗑️")
+                    values=values,
                 )
 
     def refresh_cards(self):
@@ -156,15 +274,16 @@ class OrderingUIMixin:
         for idx, m in enumerate(menu_items):
             card = tk.Frame(
                 grid_container, bg=CARD_BG, highlightbackground="#e2e8f0",
-                highlightthickness=1, width=card_width, height=190,
+                highlightthickness=1, width=card_width, height=220,
             )
             card.grid(
                 row=idx // column_count, column=idx % column_count,
-                padx=(0, card_gap), pady=(0, card_gap), sticky="n",
+                padx=(card_gap // 2, card_gap // 2),
+                pady=(0, card_gap), sticky="n",
             )
             card.pack_propagate(False)
 
-            img_container = tk.Frame(card, bg="#f1f5f9", height=88)
+            img_container = tk.Frame(card, bg="#f1f5f9", width=146, height=88)
             img_container.pack(fill="x", padx=10, pady=(10, 8))
             img_container.pack_propagate(False)
 
@@ -178,7 +297,7 @@ class OrderingUIMixin:
             if image_path:
                 try:
                     pil_img = Image.open(image_path)
-                    pil_img = pil_img.resize((145, 88), Image.Resampling.LANCZOS)
+                    pil_img = pil_img.resize((146, 88), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(pil_img)
                     self.image_cache[m["id"]] = photo
                     img_lbl = tk.Label(img_container, image=photo, bg="#e2e8f0")
@@ -191,12 +310,12 @@ class OrderingUIMixin:
                 tk.Label(img_container, text=emoji, bg="#e2e8f0", font=("Segoe UI", 22)).place(relx=0.5, rely=0.5, anchor="center")
 
             tk.Label(card, text=m["name"], bg=CARD_BG, fg=TEXT_DARK,
-                     font=("Segoe UI", 9, "bold")).pack(anchor="center", pady=(2, 0))
+                     font=("Segoe UI", 9, "bold")).pack(anchor="center", pady=(5, 0))
             tk.Label(card, text=f"₱{m['price']:.0f}", bg=CARD_BG, fg=RED_ACCENT,
-                     font=("Segoe UI", 10, "bold")).pack(anchor="center", pady=(2, 0))
+                     font=("Segoe UI", 10, "bold")).pack(anchor="center", pady=(4, 0))
 
             ctrl_row = tk.Frame(card, bg=CARD_BG)
-            ctrl_row.pack(anchor="center", pady=(6, 8))
+            ctrl_row.pack(anchor="center", pady=(8, 12))
         
             tk.Button(ctrl_row, text="−", width=3, bg="#f1f5f9", fg=TEXT_DARK,
                       relief="flat", cursor="hand2",
@@ -299,15 +418,24 @@ class OrderingUIMixin:
         return int(sel[0])
 
     def add_item(self):
+        if self.current_role not in ADMIN_ROLES:
+            messagebox.showerror("Access denied", "Only admins can manage menu items.", parent=self)
+            return
         self.item_form()
 
     def edit_item(self):
+        if self.current_role not in ADMIN_ROLES:
+            messagebox.showerror("Access denied", "Only admins can manage menu items.", parent=self)
+            return
         item_id = self.selected_id()
         if item_id:
             item = next(m for m in db.get_menu() if m["id"] == item_id)
             self.item_form(item)
 
     def item_form(self, item=None):
+        if self.current_role not in ADMIN_ROLES:
+            messagebox.showerror("Access denied", "Only admins can manage menu items.", parent=self)
+            return
         win = tk.Toplevel(self)
         win.title("Edit Item" if item else "Add Item")
         win.geometry("340x280")
@@ -348,6 +476,9 @@ class OrderingUIMixin:
         tk.Button(win, text="Save", bg=GOLD, relief="flat", command=save).grid(row=4, column=0, columnspan=2, pady=12)
 
     def restock(self):
+        if self.current_role not in STAFF_ROLES:
+            messagebox.showerror("Access denied", "Only canteen staff can restock inventory.", parent=self)
+            return
         ings = db.get_ingredients()
         if not ings:
             messagebox.showinfo("No ingredients", "Add an ingredient before restocking.", parent=self)

@@ -5,7 +5,9 @@ import os
 import secrets
 from datetime import datetime
 
-ACCOUNT_ROLES = ("Teacher", "Student", "Canteen staff")
+ACCOUNT_ROLES = ("Teacher", "Student", "Canteen staff", "Admin")
+ADMIN_ROLES = ("Admin",)
+STAFF_ROLES = ("Canteen staff",)
 VERIFICATION_PENDING = "Pending"
 VERIFICATION_ACCEPTED = "Accepted"
 VERIFICATION_DECLINED = "Declined"
@@ -26,11 +28,13 @@ class InMemoryDB:
             {"id": 4, "name": "Vegetables", "status": "Normal", "stock": 15},
         ]
         self.menu = [
-            {"id": 1, "name": "Adobo", "category": "Main Dish", "price": 95, "status": "Available", "stock": 15, "ingredient_id": 1},
+            {"id": 1, "name": "Adobo", "category": "Main Dish", "price": 95, "status": "Available", "stock": 15, "ingredient_id": 2},
             {"id": 2, "name": "Sinigang", "category": "Soup", "price": 110, "status": "Available", "stock": 10, "ingredient_id": 1},
             {"id": 3, "name": "Pancit", "category": "Noodles", "price": 80, "status": "Low Stock", "stock": 3, "ingredient_id": 3},
-            {"id": 4, "name": "Lumpia", "category": "Appetizer", "price": 50, "status": "Available", "stock": 20, "ingredient_id": 2},
+            {"id": 4, "name": "Lumpia", "category": "Appetizer", "price": 50, "status": "Available", "stock": 20, "ingredient_id": 4},
         ]
+        for ingredient in self.ingredients:
+            self._sync_menu_inventory(ingredient)
         self.orders = []
         self._next_order_id = 1
 
@@ -42,11 +46,33 @@ class InMemoryDB:
     def get_ingredients(self):
         return self.ingredients
 
+    def _sync_menu_inventory(self, ingredient):
+        stock = ingredient["stock"]
+        ingredient["status"] = (
+            "Out of Stock" if stock == 0
+            else "High" if stock >= self.settings["high_threshold"]
+            else "Normal" if stock > self.settings["low_threshold"]
+            else "Low Stock"
+        )
+        for item in self.menu:
+            if item["ingredient_id"] != ingredient["id"]:
+                continue
+            item["stock"] = stock
+            item["status"] = (
+                "Out of Stock" if stock == 0
+                else "Low Stock" if stock <= self.settings["low_threshold"]
+                else "Available"
+            )
+
     def add_item(self, name, category, price, ingredient_id):
         new_id = max([m["id"] for m in self.menu], default=0) + 1
         ing = next((i for i in self.ingredients if i["id"] == ingredient_id), None)
-        stock = ing["stock"] if ing else 10
-        status = "Available" if stock > 0 else "Out of Stock"
+        stock = ing["stock"] if ing else 0
+        status = (
+            "Out of Stock" if stock == 0
+            else "Low Stock" if stock <= self.settings["low_threshold"]
+            else "Available"
+        )
         self.menu.append({
             "id": new_id, "name": name, "category": category,
             "price": price, "status": status, "stock": stock, "ingredient_id": ingredient_id
@@ -59,43 +85,52 @@ class InMemoryDB:
                 m["category"] = category
                 m["price"] = price
                 m["ingredient_id"] = ingredient_id
+                ingredient = next(
+                    (item for item in self.ingredients if item["id"] == ingredient_id),
+                    None,
+                )
+                if ingredient is not None:
+                    self._sync_menu_inventory(ingredient)
 
     def restock_ingredient(self, ing_id, amount):
-        for i in self.ingredients:
-            if i["id"] == ing_id:
-                i["stock"] += amount
-                if i["stock"] >= self.settings["high_threshold"]:
-                    i["status"] = "High"
-                elif i["stock"] > self.settings["low_threshold"]:
-                    i["status"] = "Normal"
-                elif i["stock"] > 0:
-                    i["status"] = "Low Stock"
-        # Update linked menu items stock
-        for m in self.menu:
-            if m["ingredient_id"] == ing_id:
-                ing = next(i for i in self.ingredients if i["id"] == ing_id)
-                m["stock"] = ing["stock"]
-                m["status"] = (
-                    "Out of Stock" if m["stock"] == 0
-                    else "Low Stock" if m["stock"] <= self.settings["low_threshold"]
-                    else "Available"
-                )
+        ingredient = next((item for item in self.ingredients if item["id"] == ing_id), None)
+        if ingredient is None:
+            raise ValueError("The selected ingredient no longer exists.")
+        ingredient["stock"] += amount
+        self._sync_menu_inventory(ingredient)
 
     def save_order(self, cart):
+        ingredients_by_id = {ingredient["id"]: ingredient for ingredient in self.ingredients}
+        required_ingredients = {}
         total = 0
         order_items = []
         for item_id, qty in cart.items():
             m = next((item for item in self.menu if item["id"] == item_id), None)
-            if not m or m["stock"] < qty:
-                raise ValueError(f"Insufficient stock for {m['name'] if m else 'item'}")
+            if m is None:
+                raise ValueError("The selected menu item is no longer available.")
+            if qty <= 0:
+                raise ValueError(f"Invalid quantity for {m['name']}.")
+
+            ingredient = ingredients_by_id.get(m["ingredient_id"])
+            if ingredient is None:
+                raise ValueError(f"No ingredient is configured for {m['name']}.")
+            required_ingredients[ingredient["id"]] = (
+                required_ingredients.get(ingredient["id"], 0) + qty
+            )
             total += m["price"] * qty
             order_items.append({"name": m["name"], "price": m["price"], "quantity": qty})
-            m["stock"] -= qty
-            m["status"] = (
-                "Out of Stock" if m["stock"] == 0
-                else "Low Stock" if m["stock"] <= self.settings["low_threshold"]
-                else "Available"
-            )
+
+        for ingredient_id, quantity in required_ingredients.items():
+            ingredient = ingredients_by_id[ingredient_id]
+            if ingredient["stock"] < quantity:
+                raise ValueError(
+                    f"Insufficient {ingredient['name']} stock to complete this order."
+                )
+
+        for ingredient_id, quantity in required_ingredients.items():
+            ingredient = ingredients_by_id[ingredient_id]
+            ingredient["stock"] -= quantity
+            self._sync_menu_inventory(ingredient)
 
         order_id = self._next_order_id
         self._next_order_id += 1
@@ -211,6 +246,10 @@ class AccountStore:
         )
         if not hmac.compare_digest(candidate, bytes.fromhex(account["password_hash"])):
             return None
+        if account["verification_status"] != VERIFICATION_ACCEPTED:
+            if account["verification_status"] == VERIFICATION_PENDING:
+                raise ValueError("Your account is pending admin approval.")
+            raise ValueError("Your account has not been approved.")
         return account
 
     def get_pending_accounts(self):
@@ -230,8 +269,8 @@ class AccountStore:
         reviewer_account = stored_accounts.get(reviewer_key)
         account = stored_accounts.get(account_key)
 
-        if reviewer_account is None or reviewer_account["role"] != "Canteen staff":
-            raise ValueError("Only canteen staff can review accounts.")
+        if reviewer_account is None or reviewer_account["role"] not in ADMIN_ROLES:
+            raise ValueError("Only admins can review accounts.")
         if account is None:
             raise ValueError("The selected account no longer exists.")
         if reviewer_key == account_key:
