@@ -128,6 +128,16 @@ class LoginWindow(tk.Toplevel):
             except (OSError, ValueError) as error:
                 messagebox.showerror("Registration failed", str(error), parent=self)
                 return
+            self.toggle_mode()
+            self.pass_entry.delete(0, tk.END)
+            self.confirm_entry.delete(0, tk.END)
+            messagebox.showwarning(
+                "Account pending approval",
+                "Your account was created and is pending admin approval. "
+                "You can log in after an admin approves it.",
+                parent=self,
+            )
+            return
         else:
             if not u or not p:
                 messagebox.showerror("Error", "Please enter your username and password.", parent=self)
